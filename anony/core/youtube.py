@@ -1,7 +1,3 @@
-# Copyright (c) 2025 AnonymousX1025
-# Licensed under the MIT License.
-# This file is part of AnonXMusic
-
 import os
 import re
 import yt_dlp
@@ -10,12 +6,10 @@ import asyncio
 import aiohttp
 from pathlib import Path
 from urllib.parse import urlparse
-
 from youtubesearchpython.future import Playlist, VideosSearch
 
 from anony import logger, config
 from anony.helpers import Track, utils
-
 
 class YouTube:
     def __init__(self):
@@ -26,7 +20,7 @@ class YouTube:
         self.warned = False
         self.api_url = str(getattr(config, "API_URL", "")).rstrip("/")
         self.api_timeout = 60
-        self.api_retries = 2
+        self.api_retries = 3
         self.regex = re.compile(
             r"(https?://)?(www\.|m\.|music\.)?"
             r"(youtube\.com/(watch\?v=|shorts/|playlist\?list=)|youtu\.be/)"
@@ -40,9 +34,10 @@ class YouTube:
 
     def get_cookies(self):
         if not self.checked:
-            for file in os.listdir(self.cookie_dir):
-                if file.endswith(".txt"):
-                    self.cookies.append(f"{self.cookie_dir}/{file}")
+            if os.path.isdir(self.cookie_dir):
+                for file in os.listdir(self.cookie_dir):
+                    if file.endswith(".txt"):
+                        self.cookies.append(f"{self.cookie_dir}/{file}")
             self.checked = True
         if not self.cookies:
             if not self.warned:
@@ -90,19 +85,16 @@ class YouTube:
                 video=video,
             )
         return None
-
     async def playlist(self, limit: int, user: str, url: str, video: bool) -> list[Track | None]:
         tracks = []
         try:
             plist = await Playlist.get(url)
             videos = plist.get("videos", []) or []
-
             while len(videos) < limit and plist.get("hasMoreVideos"):
                 plist = await Playlist.getNextVideos(plist)
                 if not plist:
                     break
                 videos.extend(plist.get("videos", []) or [])
-
             for data in videos[:limit]:
                 thumbs = data.get("thumbnails") or [{}]
                 link = data.get("link") or f"{self.base}{data.get('id')}"
@@ -126,33 +118,49 @@ class YouTube:
     async def _api_download(self, video_id: str, video: bool = False) -> str | None:
         if not self.api_url:
             return None
-        endpoint = (
-            f"{self.api_url}/download?id={video_id}&format=1080"
-            if video else
-            f"{self.api_url}/mp3?id={video_id}"
-        )
+        endpoints = []
+        if video:
+            endpoints = [
+                f"{self.api_url}/download?id={video_id}&format=1080",
+                f"{self.api_url}/download?url={self.base}{video_id}&format=1080",
+            ]
+        else:
+            endpoints = [
+                f"{self.api_url}/mp3?id={video_id}",
+                f"{self.api_url}/download?id={video_id}&format=m4a",
+                f"{self.api_url}/download?url={self.base}{video_id}&format=m4a",
+            ]
         timeout = aiohttp.ClientTimeout(total=self.api_timeout)
-        for _ in range(self.api_retries):
-            try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
-                    async with session.get(endpoint) as resp:
-                        resp.raise_for_status()
-                        data = await resp.json()
-                    link = data.get("downloadUrl")
-                    if not link:
-                        continue
-                    ext = Path(urlparse(link).path).suffix or (".mp4" if video else ".mp3")
-                    filename = f"downloads/{video_id}{ext}"
-                    if Path(filename).exists():
-                        return filename
-                    async with session.get(link) as dl:
-                        dl.raise_for_status()
-                        with open(filename, "wb") as fw:
-                            async for chunk in dl.content.iter_chunked(1024 * 1024):
-                                fw.write(chunk)
-                    return filename if Path(filename).exists() else None
-            except Exception as ex:
-                logger.warning("API download failed: %s", ex)
+        for endpoint in endpoints:
+            for _ in range(self.api_retries):
+                try:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                        async with session.get(endpoint) as resp:
+                            resp.raise_for_status()
+                            data = await resp.json()
+
+                        link = (
+                            data.get("downloadUrl")
+                            or data.get("download_url")
+                            or data.get("url")
+                        )
+                        if not link:
+                            continue
+                        ext = Path(urlparse(link).path).suffix
+                        if not ext:
+                            ext = ".mp4" if video else ".m4a"
+                        filename = f"downloads/{video_id}{ext}"
+                        if Path(filename).exists():
+                            return filename
+                        async with session.get(link) as dl:
+                            dl.raise_for_status()
+                            with open(filename, "wb") as fw:
+                                async for chunk in dl.content.iter_chunked(1024 * 1024):
+                                    fw.write(chunk)
+                        if Path(filename).exists():
+                            return filename
+                except Exception as ex:
+                    logger.warning("API download failed: %s", ex)
         return None
 
     async def download(self, video_id: str, video: bool = False) -> str | None:
@@ -160,7 +168,6 @@ class YouTube:
             cached = f"downloads/{video_id}.{ext}"
             if Path(cached).exists():
                 return cached
-
         api_file = await self._api_download(video_id, video)
         if api_file:
             return api_file
@@ -176,9 +183,12 @@ class YouTube:
             "no_warnings": True,
             "overwrites": False,
             "nocheckcertificate": True,
-            "cookiefile": cookie,
+            "js_runtimes": {"deno": {}},
+            "remote_components": ["ejs:github"],
         }
 
+        if cookie:
+            base_opts["cookiefile"] = cookie
         if video:
             ydl_opts = {
                 **base_opts,

@@ -1,7 +1,3 @@
-# Copyright (c) 2025 AnonymousX1025
-# Licensed under the MIT License.
-# This file is part of AnonXMusic
-
 from pathlib import Path
 
 from pyrogram import filters, types
@@ -69,8 +65,26 @@ async def play_hndlr(
             )
 
     elif len(m.command) >= 2:
-        query = " ".join(m.command[1:])
-        file = await yt.search(query, sent.id, video=video)
+        query = " ".join(m.command[1:]).strip()
+
+        if yt.valid(query):
+            if "playlist" in query:
+                is_playlist = True
+                await sent.edit_text(m.lang["playlist_fetch"])
+                tracks = await yt.playlist(
+                    config.PLAYLIST_LIMIT, mention, query, video
+                )
+
+                if not tracks:
+                    return await sent.edit_text(m.lang["playlist_error"])
+
+                file = tracks.pop(0)
+                file.message_id = sent.id
+            else:
+                file = await yt.search(query, sent.id, video=video)
+        else:
+            file = await yt.search(query, sent.id, video=video)
+
         if not file:
             return await sent.edit_text(
                 m.lang["play_not_found"].format(config.SUPPORT_CHAT)
@@ -93,7 +107,7 @@ async def play_hndlr(
     else:
         position = queue.add(m.chat.id, file)
 
-        if position != 0 or await db.get_call(m.chat.id):
+        if position > 0:
             await sent.edit_text(
                 m.lang["play_queued"].format(
                     position,
@@ -138,7 +152,6 @@ async def play_hndlr(
             except Exception:
                 pass
         raise
-
     if not tracks:
         return
 

@@ -2,7 +2,8 @@
 # Licensed under the MIT License.
 # This file is part of AnonXMusic
 
-from youtubesearchpython.future import VideosSearch
+
+from py_yt import VideosSearch
 from pyrogram import types
 
 from anony import app
@@ -11,28 +12,24 @@ from anony.helpers import buttons
 
 @app.on_inline_query(~app.bl_users)
 async def inline_query_handler(_, query: types.InlineQuery):
-    text = query.query.strip()
+    text = query.query.strip().lower()
     if not text:
         return
 
     try:
         search = VideosSearch(text, limit=15)
-        results = (await search.next()).get("result", []) or []
+        results = (await search.next()).get("result", [])
 
         answers = []
         for video in results:
-            title = (video.get("title") or "Unknown Title").title()
-            duration = video.get("duration") or "N/A"
-            views = video.get("viewCount", {}).get("short") or "N/A"
-            thumbs = video.get("thumbnails") or [{}]
-            thumbnail = (thumbs[0].get("url") or "").split("?")[0]
-            channel = video.get("channel", {}).get("name") or "Unknown Channel"
-            channellink = video.get("channel", {}).get("link") or "https://youtube.com"
-            link = video.get("link") or "https://youtube.com"
-            published = video.get("publishedTime") or "N/A"
-
-            if not thumbnail:
-                continue
+            title = video.get("title", "Unknown Title").title()
+            duration = video.get("duration", "N/A")
+            views = video.get("viewCount", {}).get("short", "N/A")
+            thumbnail = video.get("thumbnails", [{}])[0].get("url", "").split("?")[0]
+            channel = video.get("channel", {}).get("name", "Unknown Channel")
+            channellink = video.get("channel", {}).get("link", "https://youtube.com")
+            link = video.get("link", "https://youtube.com")
+            published = video.get("publishedTime", "N/A")
 
             description = f"{views} | {duration} | {channel} | {published}"
             caption = (
